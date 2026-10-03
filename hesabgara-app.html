@@ -42,7 +42,7 @@ nav{position:fixed;inset-inline:0;bottom:0;background:var(--card);border-top:1px
 nav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;border:0;background:none;color:var(--mut);padding:9px 4px 8px;font:inherit;font-size:12px;cursor:pointer}nav svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 nav button[aria-current=true]{color:var(--link);font-weight:600}nav button[aria-current=true]::before{content:"";width:28px;height:3px;border-radius:2px;background:var(--link);margin-bottom:3px}
 .btn{display:inline-block;background:var(--acc2);color:#fff;border:0;border-radius:14px;padding:12px 20px;font:inherit;font-weight:600;cursor:pointer}.btn.alt{background:none;color:var(--bad);border:1px solid var(--line)}
-#sheet{position:fixed;inset:0;background:var(--bg);overflow:auto;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 30px;transform:translateY(100%);visibility:hidden;transition:transform .28s ease,visibility .28s}
+#sheet{position:fixed;inset:0;z-index:20;background:var(--bg);overflow:auto;padding:0 16px 30px;transform:translateY(100%);visibility:hidden;transition:transform .28s ease,visibility .28s}
 #sheet.on{transform:none;visibility:visible}#sheet .inner{max-width:640px;margin:0 auto}
 dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:12px 0;background:var(--card);border-radius:16px;padding:14px;box-shadow:var(--sh)}dt{color:var(--mut)}dd{margin:0}
 .empty{text-align:center;padding:30px 10px;color:var(--mut)}.empty svg{width:120px;height:auto;margin-bottom:6px}
@@ -56,6 +56,9 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--link);outline-o
 #hdr .sync{margin-inline-start:auto;font-size:11.5px;color:var(--mut);text-align:start;line-height:1.5}
 .hero>*{position:relative;z-index:1}.hero .motif{position:absolute;inset-inline-start:6px;bottom:0;width:150px;opacity:.11;z-index:0;pointer-events:none}
 .empty h1{color:var(--ink);font-size:20px;margin:6px 0 4px}.empty-logo{width:104px;height:104px;border-radius:26px;box-shadow:0 10px 28px rgba(4,24,91,.35);margin-bottom:10px}
+.shbar{position:sticky;top:0;z-index:4;background:var(--bg);padding:calc(10px + env(safe-area-inset-top,0px)) 0 10px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.bk{display:inline-flex;align-items:center;gap:8px;min-height:46px;padding:0 18px 0 14px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--link);font:inherit;font-weight:700;box-shadow:var(--sh);cursor:pointer}
+.bk svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 </style>
 </head>
 <body>
@@ -140,8 +143,21 @@ function vChk(app){
   const cl={'برگشتی':'bad','در انتظار وصول':'warn'};
   app.innerHTML=`<h1>چک‌ها</h1><input id="q" type="search" placeholder="شماره چک یا نام شرکت" value="${esc(q)}">${chips([['all','همه'],['در انتظار وصول','در انتظار'],['برگشتی','برگشتی'],['وصول‌شده','وصول‌شده']])}${list.map(c=>`<button class="row s-${cl[c.checkStatus]||'ok'}" data-inv="${c.invoiceId}"><div class="top"><b>${esc(c.co)}</b><span class="tag ${cl[c.checkStatus]||'ok'}">${esc(c.checkStatus||'—')}</span></div><div class="mut">چک ${esc(c.checkNumber||'بدون شماره')} · تاریخ چک ${esc(c.checkDateFa||'—')} · فاکتور ${esc(c.num)}</div><div>${fmt(c.amount)} ریال</div></button>`).join('')||'<div class="empty">موردی پیدا نشد.</div>'}`;
 }
-function sheet(html){const s=$('#sheet');s.innerHTML=`<div class="inner"><p><button class="btn" id="back">بازگشت</button></p>${html}</div>`;s.classList.add('on');$('#back').onclick=closeSheet;s.scrollTop=0;s.querySelectorAll('[data-inv]').forEach(b=>b.onclick=()=>openInv(+b.dataset.inv))}
-function closeSheet(){$('#sheet').classList.remove('on')}
+let shOpen=false;
+function sheet(html){
+  const s=$('#sheet');
+  s.innerHTML=`<div class="shbar"><button class="bk" id="back" aria-label="بازگشت"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg><span>بازگشت</span></button></div><div class="inner">${html}</div>`;
+  s.classList.add('on');
+  if(!shOpen){shOpen=true;try{history.pushState({sheet:1},'')}catch(e){}}
+  $('#back').onclick=closeSheet;s.scrollTop=0;
+  s.querySelectorAll('[data-inv]').forEach(b=>b.onclick=()=>openInv(+b.dataset.inv));
+}
+function closeSheet(){
+  if(!shOpen)return;shOpen=false;$('#sheet').classList.remove('on');
+  try{if(history.state&&history.state.sheet)history.back()}catch(e){}
+}
+addEventListener('popstate',()=>{if(shOpen){shOpen=false;$('#sheet').classList.remove('on')}});
+addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 function openInv(id){
   const i=D.invoices.find(v=>v.id===id);if(!i)return;const[l,c]=ST[i.st],pays=(M.p[id]||[]).slice().reverse();
   sheet(`<h1>فاکتور ${esc(i.number)}</h1><span class="tag ${c}">${l}</span><dl><dt>شرکت</dt><dd>${esc(i.co)}</dd><dt>تاریخ</dt><dd>${esc(i.dateFa)}</dd><dt>سررسید</dt><dd>${esc(i.dueFa)}</dd><dt>مبلغ</dt><dd>${fmt(i.amount)}</dd><dt>پرداختی</dt><dd>${fmt(i.paid)}</dd><dt>مانده</dt><dd><b>${fmt(i.bal)}</b></dd>${i.note?`<dt>یادداشت</dt><dd>${esc(i.note)}</dd>`:''}</dl>
