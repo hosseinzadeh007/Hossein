@@ -1,8 +1,7 @@
-
 name: Build HesabGara Android APK
 
-# فقط به دو فایل در ریشه‌ی مخزن نیاز دارد:
-#   hesabgara-app.html   (صفحه‌ی اپ موبایل)
+# ورودی‌ها در ریشه‌ی مخزن:
+#   hesabgara-app.html   (صفحه‌ی اپ موبایل؛ اگر نبود از داخل زیپ پروژه در مخزن برداشته می‌شود)
 #   hesabgara-icon.png   (آیکون؛ اختیاری)
 # پروژه‌ی اندروید در خود اجرا ساخته می‌شود.
 
@@ -16,9 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check input files
+      - name: Prepare input files
         run: |
-          test -f hesabgara-app.html || { echo "فایل hesabgara-app.html در ریشه‌ی مخزن پیدا نشد"; ls -la; exit 1; }
+          # اگر hesabgara-app.html در ریشه نیست، از داخل زیپ پروژه (اگر در مخزن هست) برداشته می‌شود.
+          if [ ! -f hesabgara-app.html ]; then
+            for z in ./*.zip; do
+              [ -f "$z" ] || continue
+              for p in mobile/hesabgara-mobile.html mobile/android-app/www/index.html; do
+                if unzip -l "$z" "$p" > /dev/null 2>&1; then
+                  unzip -p "$z" "$p" > hesabgara-app.html
+                  echo "صفحه‌ی اپ از «$z» ($p) برداشته شد"
+                  break 2
+                fi
+              done
+            done
+          fi
+          test -s hesabgara-app.html || { echo "فایل hesabgara-app.html پیدا نشد و داخل زیپ‌های مخزن هم نبود"; ls -la; exit 1; }
           ls -la hesabgara-app.html hesabgara-icon.png 2>/dev/null || true
 
       - uses: actions/setup-node@v4
