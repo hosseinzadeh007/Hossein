@@ -1,117 +1,56 @@
 name: Build HesabGara Android APK
 
 on:
-  workflow_dispatch:
-
-permissions:
-  contents: read
+  workflow_dispatch:   # دکمه‌ی «Run workflow» در تب Actions
 
 jobs:
   build-android:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mobile/android-app   # پوشه‌ی پروژه‌ی اندروید در مخزن
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js 24
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 17        # Capacitor 6 به Java 17 نیاز دارد
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      # Android SDK روی ماشین‌های GitHub از قبل نصب است (API 34/35 و build-tools)؛
+      # بنابراین مرحله‌ی setup-android لازم نیست. این مرحله فقط برای عیب‌یابی است.
+      - name: Check preinstalled Android SDK
         run: |
-          sdkmanager "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" || true
 
-      - name: Extract HesabGara mobile project
-        shell: bash
-        run: |
-          ZIP="$(find . -maxdepth 2 -type f -name 'HesabGara*.zip' | head -n 1)"
-
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: HesabGara ZIP file not found."
-            exit 1
-          fi
-
-          echo "Found ZIP: $ZIP"
-
-          rm -rf extracted
-          mkdir extracted
-
-          unzip -q "$ZIP" -d extracted
-
-          APP_DIR="$(find extracted -type f \
-            -name package.json \
-            -path '*/mobile/android-app/*' \
-            -print -quit | xargs -r dirname)"
-
-          if [ -z "$APP_DIR" ]; then
-            echo "ERROR: Mobile project not found."
-            echo "Expected path: mobile/android-app"
-            exit 1
-          fi
-
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-
-          echo "Mobile project found:"
-          echo "$APP_DIR"
-
-      - name: Install Capacitor dependencies
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          npm install --no-audit --no-fund
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
 
       - name: Create Android project
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          npx cap add android
+        run: npx cap add android
 
-      - name: Sync Capacitor
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          npx cap sync android
+      - name: Generate icons from the logo
+        run: npm run icons
 
-      - name: Build APK
-        working-directory: ${{ env.APP_DIR }}/android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+      - name: Sync web assets
+        run: npx cap sync android
 
-      - name: Prepare HesabGara.apk
-        shell: bash
-        run: |
-          mkdir -p output
+      - name: Build debug APK
+        working-directory: mobile/android-app/android
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
-          APK="$APP_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+      - name: SHA256 of the APK
+        run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk
 
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not generated."
-            exit 1
-          fi
-
-          cp "$APK" output/HesabGara.apk
-
-          echo "================================"
-          echo "HesabGara APK successfully built"
-          echo "================================"
-
-          ls -lh output/HesabGara.apk
-
-      - name: Upload HesabGara APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: HesabGara-Android
-          path: output/HesabGara.apk
+          name: HesabGara-apk
+          path: mobile/android-app/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          compression-level: 0
