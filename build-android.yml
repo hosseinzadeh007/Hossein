@@ -1,0 +1,180 @@
+name: Build HesabGara Android APK
+
+# ورودی‌ها در ریشه‌ی مخزن:
+#   hesabgara-app.html   (صفحه‌ی اپ موبایل؛ اگر نبود از داخل زیپ پروژه در مخزن برداشته می‌شود)
+#   hesabgara-icon.png   (آیکون؛ اختیاری)
+# پروژه‌ی اندروید در خود اجرا ساخته می‌شود.
+
+on:
+  workflow_dispatch:   # دکمه‌ی «Run workflow» در تب Actions
+
+jobs:
+  build-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare input files
+        run: |
+          # اگر hesabgara-app.html در ریشه نیست، از داخل زیپ پروژه (اگر در مخزن هست) برداشته می‌شود.
+          if [ ! -f hesabgara-app.html ]; then
+            for z in ./*.zip; do
+              [ -f "$z" ] || continue
+              echo "بررسی «$z»: $(unzip -Z1 "$z" 2>/dev/null | wc -l) فایل؛ مسیرهای موبایل:"
+              unzip -Z1 "$z" 2>/dev/null | grep -i "mobile" | head -5 || true
+              entry=$(unzip -Z1 "$z" 2>/dev/null | grep -m1 -E '(^|/)(mobile/hesabgara-mobile\.html|mobile/android-app/www/index\.html)$' || true)
+              if [ -n "$entry" ]; then
+                unzip -p "$z" "$entry" > hesabgara-app.html
+                echo "صفحه‌ی اپ از «$z» ($entry) برداشته شد"
+                break
+              fi
+            done
+          fi
+          test -s hesabgara-app.html || { echo "فایل hesabgara-app.html پیدا نشد و داخل زیپ‌های مخزن هم نبود"; ls -la; exit 1; }
+          ls -la hesabgara-app.html hesabgara-icon.png 2>/dev/null || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17        # Capacitor 6 به Java 17 نیاز دارد
+
+      # Android SDK روی ماشین‌های GitHub از قبل نصب است؛ مرحله‌ی جداگانه لازم نیست.
+      - name: Create Capacitor project
+        run: |
+          mkdir -p app/www app/assets
+          cp hesabgara-app.html app/www/index.html
+          if [ -f hesabgara-icon.png ]; then cp hesabgara-icon.png app/assets/icon-only.png; fi
+          cd app
+          cat > package.json <<'JSON'
+          {
+            "name": "hesabgara-mobile",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.0.0",
+              "@capacitor/core": "^6.0.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.0.0"
+            }
+          }
+          JSON
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "ir.hesabgara.mobile",
+            "appName": "HesabGara",
+            "webDir": "www",
+            "backgroundColor": "#04185b"
+          }
+          JSON
+          npm install --no-audit --no-fund
+          npx cap add android
+          if [ -f assets/icon-only.png ]; then
+            # آیکون‌های اندروید دقیقاً از لوگوی برنامه ساخته می‌شود (بدون ابزار جانبی)
+            python3 -m pip install --quiet pillow
+            cat > make-android-icons.py <<'PYEND'
+          """ساخت آیکون‌های اندروید دقیقاً از لوگوی حساب‌گرا (بدون وابستگی به capacitor-assets).
+
+          ورودی : لوگوی اصلی (PNG؛ گوشه‌های شفاف یا تمام‌صفحه هر دو قابل قبول است)
+          خروجی : فایل‌های res اندروید:
+            • mipmap-*/ic_launcher.png        ← خود لوگو (برای اندروید قدیمی‌تر از ۸)
+            • mipmap-*/ic_launcher_round.png  ← لوگو در قاب گرد
+            • mipmap-*/ic_launcher_foreground.png + values/hesabgara_icon_background.xml + mipmap-anydpi-v26/*.xml
+              ← آیکون تطبیقی اندروید ۸ به بعد؛ لوگو ~۷۰٪ بوم را پر می‌کند تا در ماسک گرد/گردگوشه‌ی لانچر
+                تقریباً همان لوگوی اصلی دیده شود.
+          استفاده: python3 make-android-icons.py <logo.png> <app/src/main/res>
+          """
+          import os
+          import statistics
+          import sys
+          from PIL import Image, ImageDraw
+
+          src, res = sys.argv[1], sys.argv[2]
+          LEGACY = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
+          ADAPTIVE = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
+          FG_SCALE = 0.70
+
+          im = Image.open(src).convert("RGBA")
+          box = im.getchannel("A").point(lambda a: 255 if a > 20 else 0).getbbox() or (0, 0, *im.size)
+          c = im.crop(box)
+          side = max(c.size)
+          logo = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+          logo.paste(c, ((side - c.width) // 2, (side - c.height) // 2))
+
+
+          def rim_color():
+              w = logo.size[0]
+              px = []
+              for y0, y1 in ((0.03, 0.055), (0.945, 0.97)):
+                  for y in range(int(w * y0), int(w * y1)):
+                      for x in range(int(w * 0.3), int(w * 0.7), 4):
+                          r, g, b, a = logo.getpixel((x, y))
+                          if a > 200:
+                              px.append((r, g, b))
+              return tuple(int(statistics.median(ch)) for ch in zip(*px)) if px else (4, 24, 91)
+
+
+          rim = rim_color()
+          for density in LEGACY:
+              os.makedirs(f"{res}/mipmap-{density}", exist_ok=True)
+          os.makedirs(f"{res}/mipmap-anydpi-v26", exist_ok=True)
+          os.makedirs(f"{res}/values", exist_ok=True)
+
+          for density, s in LEGACY.items():
+              square = logo.resize((s, s), Image.LANCZOS)
+              square.save(f"{res}/mipmap-{density}/ic_launcher.png", optimize=True)
+              # گرد: لوگو روی زمینه‌ی هم‌رنگ حاشیه‌اش (گوشه‌های شفاف پر می‌شود) و بعد ماسک دایره
+              filled = Image.new("RGBA", (s, s), rim + (255,))
+              filled.alpha_composite(square)
+              mask = Image.new("L", (s * 4, s * 4), 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, s * 4 - 1, s * 4 - 1), fill=255)
+              mask = mask.resize((s, s), Image.LANCZOS)
+              round_icon = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+              round_icon.paste(filled, (0, 0), mask)
+              round_icon.save(f"{res}/mipmap-{density}/ic_launcher_round.png", optimize=True)
+
+          for density, s in ADAPTIVE.items():
+              inner = round(s * FG_SCALE)
+              fg = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+              mark = logo.resize((inner, inner), Image.LANCZOS)
+              fg.paste(mark, ((s - inner) // 2, (s - inner) // 2), mark)
+              fg.save(f"{res}/mipmap-{density}/ic_launcher_foreground.png", optimize=True)
+
+          # نام رنگ عمداً مخصوص خودمان است تا با منابع پیش‌فرض Capacitor تداخل (Duplicate resources) نکند.
+          with open(f"{res}/values/hesabgara_icon_background.xml", "w", encoding="utf-8") as f:
+              f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="hesabgara_icon_background">#%02X%02X%02X</color>\n</resources>\n' % rim)
+
+          adaptive = (
+              '<?xml version="1.0" encoding="utf-8"?>\n'
+              '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+              '    <background android:drawable="@color/hesabgara_icon_background"/>\n'
+              '    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n'
+              '</adaptive-icon>\n'
+          )
+          for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
+              with open(f"{res}/mipmap-anydpi-v26/{name}", "w", encoding="utf-8") as f:
+                  f.write(adaptive)
+          print("android icons written to", res, "| background #%02X%02X%02X" % rim)
+          PYEND
+            python3 make-android-icons.py assets/icon-only.png android/app/src/main/res
+          fi
+          npx cap sync android
+
+      - name: Build debug APK
+        working-directory: app/android
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - name: SHA256 of the APK
+        run: sha256sum app/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HesabGara-apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          compression-level: 0
