@@ -1,7 +1,7 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "url": "",
-  "notes": "حذف متن توضیحی صفحه‌ی خلاصه",
+  "notes": "دیدن عکس چک در جزئیات فاکتور و چک؛ بهبود به‌روزرسانی",
   "html": "https://raw.githubusercontent.com/hosseinzadeh007/Hossein/main/hesabgara-app.html",
-  "sha256": "d8aec9eccf20fdf549006beb0429c69b2f709db4e200806de50c88bcf855162d"
+  "sha256": "dc720707f4215548fa30da12778ce96a34ec565439f11d03978c045dbe1e2247"
 }
